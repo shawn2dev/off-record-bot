@@ -12,6 +12,9 @@
     "fix": "eslint --fix '**/*.js'",
     "lint": "eslint '**/*.js'",
     "register": "node src/register.js",
+    "xp:start": "node --env-file-if-exists=.env src/xp-bot.js",
+    "xp:register": "node --env-file-if-exists=.env src/xp-bot.js --register",
+    "xp:check": "node --env-file-if-exists=.env src/xp-bot.js --check-config",
     "publish": "wrangler deploy",
     "owner": "wrangler secret put OWNER_ID"
   },
@@ -23,6 +26,7 @@
     "cheerio": "^1.1.2",
     "crawlee": "^3.13.0",
     "discord-interactions": "^4.0.0",
+    "discord.js": "^14.28.1",
     "itty-router": "^5.0.9",
     "playwright": "^1.51.0",
     "util": "^0.12.5"

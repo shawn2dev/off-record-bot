@@ -134,6 +134,115 @@ $ wrangler secret put DISCORD_PUBLIC_KEY
 $ wrangler secret put DISCORD_APPLICATION_ID
 ```
 
+## XP Gateway Bot
+
+The XP bot uses a separate Discord application and a persistent Node.js 24
+Gateway process. The existing Cloudflare Worker, its application and command
+registration remain unchanged. No web dashboard, browser, Chromium or crawler
+runs on the XP VM. The minimal deployment manifest is in `deploy/xp`.
+
+### XP Rules
+
+| Activity | XP |
+| --- | --- |
+| Message | 4, with a 1-second per-user award cooldown |
+| Voice | 20 per completed 5-minute interval |
+| Attendance | 500 once per Korean calendar day (UTC+9) |
+| Self mute or self deafen | 50% voice XP, applied once |
+| Server mute or server deafen | No reduction |
+
+Cumulative level threshold: `max(0, ceil((10 * level^2 - 5) / 3 + 1))`.
+Level numbering starts at 0. Fractional XP is stored in milli-XP; displayed XP
+is rounded down. All distinct messages count in statistics, including messages
+inside the award cooldown. Bots and webhooks are ignored.
+
+Voice XP requires at least two human members in a channel. The server AFK
+channel and explicitly excluded channels earn no XP. State changes weight the
+elapsed parts of each interval: 2 minutes unmuted plus 3 minutes self-muted
+earns 14 XP. Moving channels preserves interval progress; disconnecting from
+voice discards an incomplete interval. Voice statistics include connected time,
+even when the user is solo or in an excluded channel. XP is booked on the day
+it is settled; voice duration is split at Korean midnight.
+
+Leaving the server resets XP and removes the member from ranking. Historical
+activity and attendance records remain, preventing same-day leave/rejoin
+attendance farming. Tied XP balances share a rank.
+
+### Discord Setup
+
+Create a **new** Discord application. Enable **Server Members Intent** in its
+Bot settings. Message Content and Presence intents are not needed. Leave
+**Interactions Endpoint URL empty** for this application: commands are received
+through the Gateway. Invite it with `bot` and `applications.commands` scopes;
+`View Channels` is required for the message channels being tracked. Administrator
+and permission to connect to voice channels are not required.
+
+Set `XP_DISCORD_TOKEN`, `XP_APPLICATION_ID` and `XP_GUILD_ID` in a private `.env`
+file for local use. Optional `XP_EXCLUDED_CHANNEL_IDS` is a comma-separated list.
+For local development, set `XP_DATABASE_PATH=storage/xp.sqlite`. Never send the
+token through chat or commit it. Commands are guild-scoped and replace only
+the command list for the specified XP application and guild.
+
+```sh
+npm run xp:check
+npm run xp:register
+npm run xp:start
+```
+
+Commands: `/rank [member]`, `/leaderboard`, `/stats [days] [member]`,
+`/attendance`. Stats accepts 1-30 Korean calendar days including today; its
+default is 7 days for the server. Responses are ephemeral, not direct messages.
+There is no gift command.
+
+### Ubuntu Service
+
+Transfer `src/xp*.js`, `deploy/xp`, `.env.example`, and `scripts/*-xp.sh` to
+the VM, preserving their relative paths. Run `sudo -n bash scripts/install-xp.sh`.
+The installer installs only Discord runtime dependencies without lifecycle
+scripts. It prepares a dedicated non-login service user, a persistent database
+directory, and a daily backup timer. It deliberately does not start the bot
+before credentials are configured.
+
+Edit `/etc/off-record-xp.env` directly on the VM using `sudo -n nano`; keep it
+root-owned with mode 600. Do not print or upload the configured file. Then:
+
+```sh
+sudo -n /usr/local/bin/node --env-file=/etc/off-record-xp.env /opt/off-record-xp/src/xp-bot.js --check-config
+sudo -n /usr/local/bin/node --env-file=/etc/off-record-xp.env /opt/off-record-xp/src/xp-bot.js --register
+sudo -n systemctl enable --now off-record-xp.service
+sudo -n systemctl status off-record-xp.service --no-pager
+sudo -n journalctl -u off-record-xp.service -n 30 --no-pager
+```
+
+The process restarts after crashes and reboots, with a 320 MiB memory limit.
+SQLite checkpoints run every minute and at graceful shutdown. Startup and
+detected Gateway disconnects discard live voice sessions, never carrying their
+timers across downtime. Reconnection fetches members and resets XP for tracked
+members who are now absent. Activity during outages is not guaranteed to be
+recovered; a leave followed by rejoin entirely during an outage cannot be detected.
+Disconnect detection is not instantaneous, and the last incomplete interval
+can be lost. Always Free compute can be reclaimed and has no uptime guarantee;
+systemd cannot restore a deleted VM. No paid resources are provisioned by these
+scripts.
+
+### Backups
+
+The timer runs daily around 03:00 UTC. It uses SQLite online `.backup` and an
+integrity check, retaining seven days under `/var/lib/off-record-xp/backups`.
+Do not copy just an active WAL-mode database file. On the Mac, run
+`bash scripts/fetch-xp-backup.sh` to create a fresh backup and download the
+retained snapshots to `~/Backups/off-record-xp`, retaining fourteen days of
+download archives. SSH host-key checking remains enabled. This download is
+manual, not a scheduled off-VM backup; choose an independent scheduled backup
+destination before relying on the VM for long-term data retention.
+
+To restore, stop the service, verify `PRAGMA integrity_check` on a backup,
+replace `xp.sqlite` with that snapshot, remove stale `xp.sqlite-wal` and
+`xp.sqlite-shm` sidecars, restore service ownership and mode 600, then start
+the service. Keep a copy of the previous files before replacement.
+
+Tests: `npx mocha test/xp.test.js`. The repository-wide suite remains `npm test`.
+
 ## Questions?
 
 Feel free to post an issue here, or reach out to [@justinbeckwith](https://twitter.com/JustinBeckwith)!
