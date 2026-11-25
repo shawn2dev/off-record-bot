@@ -1,0 +1,8 @@
+tunnel: REPLACE_WITH_NAMED_TUNNEL_UUID
+credentials-file: /etc/cloudflared/off-record.json
+metrics: 127.0.0.1:20241
+
+ingress:
+  - hostname: api.REPLACE_WITH_YOUR_DOMAIN.invalid
+    service: http://127.0.0.1:8080
+  - service: http_status:404

@@ -1,0 +1,31 @@
+[Unit]
+Description=Off Record private API Cloudflare Tunnel
+After=network-online.target off-record-xp.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=off-record-tunnel
+Group=off-record-tunnel
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --config /etc/cloudflared/off-record.yml run
+Restart=always
+RestartSec=10
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+MemoryMax=128M
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=20
+
+[Install]
+WantedBy=multi-user.target

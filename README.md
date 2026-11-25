@@ -138,8 +138,10 @@ $ wrangler secret put DISCORD_APPLICATION_ID
 
 The XP bot uses a separate Discord application and a persistent Node.js 24
 Gateway process. The existing Cloudflare Worker, its application and command
-registration remain unchanged. No web dashboard, browser, Chromium or crawler
-runs on the XP VM. The minimal deployment manifest is in `deploy/xp`.
+registration remain unchanged. The static dashboard is served by AEM; only
+the Gateway, optional loopback JSON API and durable workers run on the XP VM.
+No browser, Chromium or crawler runs there. The minimal deployment manifest is
+in `deploy/xp`.
 
 ### XP Rules
 
@@ -147,11 +149,14 @@ runs on the XP VM. The minimal deployment manifest is in `deploy/xp`.
 | --- | --- |
 | Message | 4, with a 1-second per-user award cooldown |
 | Voice | 20 per completed 5-minute interval |
-| Attendance | 500 once per Korean calendar day (UTC+9) |
+| Attendance | 500 by default, once per Korean calendar day (UTC+9) |
 | Self mute or self deafen | 50% voice XP, applied once |
 | Server mute or server deafen | No reduction |
 
-Cumulative level threshold: `max(0, ceil((10 * level^2 - 5) / 3 + 1))`.
+Cumulative level threshold: `max(0, floor(((10 * level)^2 - 5) / 3 + 1))`.
+The entire `10 * level` term is squared, and fractional thresholds are rounded
+down to match the reference table: levels 1-5 require cumulative XP of
+32, 132, 299, 532 and 832. Therefore, 520 XP is level 3 and 588 XP is level 4.
 Level numbering starts at 0. Fractional XP is stored in milli-XP; displayed XP
 is rounded down. All distinct messages count in statistics, including messages
 inside the award cooldown. Bots and webhooks are ignored.
@@ -164,9 +169,87 @@ voice discards an incomplete interval. Voice statistics include connected time,
 even when the user is solo or in an excluded channel. XP is booked on the day
 it is settled; voice duration is split at Korean midnight.
 
-Leaving the server resets XP and removes the member from ranking. Historical
-activity and attendance records remain, preventing same-day leave/rejoin
-attendance farming. Tied XP balances share a rank.
+Leaving the server removes the member from ranking. XP reset is enabled by
+default: leaving and rejoining reset the balance to zero. Disabling
+`lifecycle.resetOnLeave` preserves the inactive balance and restores access to
+it on rejoin. Enabling reset while a member is absent resets that preserved
+balance on rejoin. Previously reset XP is never restored by disabling reset.
+Historical activity and attendance records remain, preventing same-day
+leave/rejoin attendance farming. Tied XP balances share a rank.
+
+Attendance replies include cumulative attendance, the current streak and both
+personal ranks, even when today's reward has already been claimed. Streaks
+remain current through the following Korean calendar day and expire after a
+missed day. Attendance and XP ranking buttons show up to ten active members,
+sharing tied ranks, plus the requesting member's own rank outside the list.
+Members with no current streak do not receive a streak rank.
+Schema version 3 backfills persistent per-member attendance summaries. SQLite
+triggers keep summaries consistent with inserts, edits, deletes and rollbacks.
+Normal ranking refreshes scan member summaries, not every historical check-in;
+historical-date reads retain their exact original semantics.
+
+### Persistence, Permissions and Economy
+
+The store applies a versioned SQLite migration on startup. Back up the database
+before the first upgrade. Existing balances become opening ledger entries;
+historical transactions are not fabricated, and attendance history is reused.
+Unsafe legacy balances and schemas newer than this application are rejected.
+An older application is not a supported rollback path for the upgraded database;
+restore a matching code/database backup together.
+
+Message, voice and attendance credits, adjustments, gifts, purchases, games,
+raffles, resets and refunds use the same transactional ledger path.
+Balance, ledger and level-change job writes
+commit together. Replayed transaction keys return the original result, while
+different request contents under the same key are rejected. Membership
+generations cancel stale work; reset versions prevent a late refund from
+recreating reset XP. A forfeited refund records a zero-value ledger entry.
+With reset disabled, a valid refund can credit a preserved inactive balance
+without reactivating the member.
+
+Versioned settings cover attendance, lifecycle, access, gifts, nicknames,
+shop availability, all four games and raffle limits. Updates require the
+expected version and save an audit record atomically. Owner
+`851312069915574332` alone controls delegation; delegated roles receive only
+explicitly selected capabilities, combined across their current roles.
+Discord Administrator permission alone does not grant application access.
+The owner may explicitly delegate an existing high/Administrator role; sale-role
+safety restrictions are not incorrectly applied to this trusted decision.
+Any role referenced by a product is rejected for delegation, and delegated
+roles cannot be sold. Caller role IDs come from fresh Discord membership,
+never browser input. Reward changes affect only future check-ins.
+
+Gifts charge the sender the requested amount; the receiver gets that amount
+minus `floor(amount * feePercent / 100)`. The default fee is 15%, configurable
+from 0-100%. Deliberately splitting small transfers to avoid rounded fees is
+allowed. Gifts cannot target self, bots or inactive/nonmembers.
+
+Role products have versioned titles, descriptions, prices and permanent role
+entitlements. Discord uses a native scrollable select menu, grouped beyond
+25 options, followed by an explicit confirmation. Web and bot purchases use
+the same service. Existing roles are never charged again; a completed purchase
+remains purchased after role removal, departure or product replacement.
+Any order permanently locks its product's role, even after refund.
+Dangerous, managed, above-bot and delegated administrator roles cannot be sold.
+Role delivery is attempted immediately after the charge commits, with bounded
+transient retries and explicit review for ambiguous outcomes. There is no
+one-second delivery guarantee and no blind refund. Administrators can retry,
+confirm or refund review orders with an audit trail.
+
+Slots, wheel, odd/even and dice default to 94% gross return to player, not a
+94% win chance. Validated integer-weight tables, milli-XP payouts, role/channel
+restrictions, betting limits and cooldowns are configurable per game. Invalid
+or unrepresentable probability/payout configurations are rejected, not silently
+clipped. Raffles preview an expiring candidate snapshot, then revalidate
+membership and settle unique winners atomically on explicit confirmation.
+
+The one-second durable worker updates level prefixes on both level increases
+and decreases, including spending. The default is `[lv.{레벨}]`; template and
+excluded roles are configurable. Original names are preserved, and disabling
+or excluding restores only a bot-applied nickname. Full-server synchronization
+queues 50 members per batch and automatically continues a persisted sweep;
+clients must not loop over the sync endpoint. Role and nickname jobs have
+leases, stale-worker fencing, bounded retries and visible review states.
 
 ### Discord Setup
 
@@ -174,8 +257,12 @@ Create a **new** Discord application. Enable **Server Members Intent** in its
 Bot settings. Message Content and Presence intents are not needed. Leave
 **Interactions Endpoint URL empty** for this application: commands are received
 through the Gateway. Invite it with `bot` and `applications.commands` scopes;
-`View Channels` is required for the message channels being tracked. Administrator
-and permission to connect to voice channels are not required.
+`View Channels` is required for the message channels being tracked. Grant
+`Manage Roles` for shop delivery and `Manage Nicknames` for level prefixes.
+Place the bot above the roles it sells and members it renames. Discord
+prevents renaming the guild owner or members above the bot; these become
+visible review/exclusion cases rather than repeated invisible failures.
+Administrator and permission to connect to voice channels are not required.
 
 Set `XP_DISCORD_TOKEN`, `XP_APPLICATION_ID` and `XP_GUILD_ID` in a private `.env`
 file for local use. Optional `XP_EXCLUDED_CHANNEL_IDS` is a comma-separated list.
@@ -189,10 +276,130 @@ npm run xp:register
 npm run xp:start
 ```
 
-Commands: `/rank [member]`, `/leaderboard`, `/stats [days] [member]`,
-`/attendance`. Stats accepts 1-30 Korean calendar days including today; its
-default is 7 days for the server. Responses are ephemeral, not direct messages.
-There is no gift command.
+Commands: `/랭크 [대상]`, `/순위`, `/통계 [기간] [대상]`, `/출석`,
+`/상점`, `/내구매`, `/경험치선물`, `/경험치추가`, `/경험치제거`,
+`/경험치추첨`, `/구매관리`, `/별명동기화`, `/슬롯`, `/돌림판`, `/홀짝`,
+`/주사위`. Administrative commands require their current application
+capabilities. Stats accepts 1-30 Korean calendar days including today; its
+default is 7 days for the server. Command responses, including errors, are public
+in the channel where the command is invoked, not direct messages.
+
+Command names, descriptions, options and visible responses are Korean for every
+client locale. Display text is maintained in `src/xp-locale-ko.js`; identifiers,
+operational logs and test descriptions remain English. New Off Record bot and
+dashboard features must follow the language rules in [AGENTS.md](AGENTS.md).
+Run `npm run xp:register` to replace previously registered English guild commands
+with the Korean command list for this application and guild.
+
+### Dashboard API and Discord Login
+
+The optional dashboard API shares the Gateway process and SQLite store. It is
+disabled by default and binds only to `127.0.0.1` or `::1`. Do not expose its
+port through the Oracle firewall. The AEM site remains the frontend; a named
+Cloudflare Tunnel supplies the fixed HTTPS API hostname.
+
+Configure these values privately in `/etc/off-record-xp.env`:
+
+| Variable | Purpose |
+| --- | --- |
+| `XP_API_ENABLED=true` | Enable the local listener |
+| `XP_API_ORIGIN` | Your fixed public HTTPS API origin, with no path |
+| `XP_DASHBOARD_URL` | Exact published AEM app URL, normally ending in `/dashboard` |
+| `XP_API_ALLOWED_SITE_ORIGINS` | Exact comma-separated frontend origins, no wildcards |
+| `XP_OAUTH_CLIENT_ID` | Discord application ID; defaults to `XP_APPLICATION_ID` |
+| `XP_OAUTH_CLIENT_SECRET` | Private OAuth secret; never place it in the site |
+| `XP_API_HOST`, `XP_API_PORT` | Loopback listener, default `127.0.0.1:8080` |
+| `XP_API_TRUST_TUNNEL` | Trust `CF-Connecting-IP` only after configuring the exclusive loopback Tunnel |
+| `XP_ACCESS_TTL_SECONDS` | Access lifetime, default 300, supported 60–900 seconds |
+| `XP_SESSION_TTL_HOURS` | Host-session lifetime, default 168, supported 1–720 hours |
+
+Register exactly `XP_API_ORIGIN/auth/callback` in the Discord application's
+OAuth redirect list. The login requests only `identify`; current membership
+and roles come from the bot, not untrusted browser claims. Configure only the
+public API origin in the site's public configuration, following its README.
+Keep development and preview origins separate from production. HTTP is accepted
+only for explicitly enabled loopback development via `XP_API_ALLOW_HTTP_LOCAL`.
+
+Login uses top-level navigation to `/auth/start`, Discord and `/auth/callback`.
+The API host keeps a `__Host-` session cookie with `HttpOnly; Secure;
+SameSite=Lax; Path=/`, no `Domain`, and a separate temporary OAuth binding
+cookie. An application code expires after 60 seconds and is exchanged once at
+`POST /auth/exchange`, requiring both the original browser attempt and S256
+PKCE verifier. OAuth state, sessions, codes and bearer tokens are stored hashed;
+Discord provider tokens are not persisted.
+
+General API requests use a short-lived bearer token in page memory, never
+third-party cookies or local storage. Reload and expiry restoration use a
+bounded top-level navigation through the API session. Cookie-only requests to
+member APIs are rejected. `POST /auth/logout` revokes the session, outstanding
+codes and all its bearer tokens even if the browser blocks third-party cookie
+deletion. Access-policy changes invalidate already issued tokens; restoring
+the session cannot revive those old tokens.
+
+All member routes require an exact allowed Origin and a valid token, then
+verify current Discord membership. Settings/actions also validate current
+delegated permissions; Discord Administrator alone does not grant access.
+Responses use `Cache-Control: private, no-store`, restrictive security headers
+and Korean structured errors. Configure Cloudflare cache bypass for the
+entire API hostname; never add a cache-everything rule to authenticated routes.
+Do not enable request-URL/query/body logging for OAuth routes.
+
+| API group | Routes |
+| --- | --- |
+| Identity and rankings | `GET /api/me`, `/api/rankings?kind=xp`, `/api/ledger` |
+| Settings and roles | `GET /api/settings`, `GET/PUT /api/settings/:section`, `GET /api/roles` |
+| Shop and orders | `GET /api/shop`, `POST /api/purchases`, `GET /api/orders` |
+| Product/order management | `POST /api/products`, `PUT /api/products/:id`, `POST /api/orders/:id/action` |
+| XP operations | `POST /api/xp/adjust`, `/api/gifts`, `/api/games/:game` |
+| Raffles | `POST /api/raffles/preview`, `/api/raffles` |
+| Nickname jobs | `GET /api/jobs`, `POST /api/jobs/sync` |
+| Administration | `GET /api/admin/summary`, `GET /api/audit` |
+| Liveness | `GET /health` (no member/configuration data) |
+
+Financial mutations require a stable `key`; preserve the original key and
+body after a timeout and inspect transaction/order state before retrying.
+Settings use `{ version, patch }`; stale updates return `409` rather than
+overwriting another administrator. Product edits and purchases also carry the
+displayed product version.
+
+HTTP protection is independent of Cloudflare paid features:
+
+- JSON bodies at most 32 KiB, headers 8 KiB, list pages at most 50.
+- Per-user reads 60/minute and writes 10/minute; IP reads 120/minute and writes
+  30/minute; login/code exchange 10/minute per route/IP.
+- Global read/write/auth budgets, bounded rate-cache keys, at most eight active
+  and 32 waiting requests, bounded waiting/body/header/response times.
+- Full-membership raffle previews and execution share a one-at-a-time admission gate
+  and user/global bulk limits.
+- Excess rate returns `429`; overload returns `503`, both with retry guidance.
+  Expired authentication is cleaned in batches of at most 200 rows per table.
+  Financial history and idempotency records are not expired with login data.
+
+Tunnel setup is deliberately separate from bot installation:
+
+1. Install the official `cloudflared` package on Oracle and create a named
+   Tunnel in the Cloudflare account controlling the API domain.
+2. Run `sudo -n bash scripts/install-xp-tunnel.sh`. It installs a dedicated,
+   hardened service but does **not** enable an unconfigured Tunnel.
+3. Configure the Tunnel UUID, real API hostname and loopback target in
+   `/etc/cloudflared/off-record.yml`. Put the private named-Tunnel credentials
+   at `/etc/cloudflared/off-record.json`, owner root, group
+   `off-record-tunnel`, mode 640. Never commit either credentials or OAuth
+   secrets. The checked-in YAML contains intentionally unusable placeholders.
+4. Route the hostname to that named Tunnel using Cloudflare DNS. Keep the final
+   `http_status:404` catch-all. Do not use a temporary Quick Tunnel for OAuth.
+5. Validate configuration with `cloudflared tunnel --config
+   /etc/cloudflared/off-record.yml ingress validate`. Check that the actual
+   hostname resolves to the intended loopback ingress.
+6. Enable the configured bot/API and then `off-record-cloudflared.service`.
+   Check local `/health`, the external HTTPS `/health`, denied Origins,
+   registration of the exact callback, real browser login and logout.
+
+Forwarded client IPs are trusted only when explicitly enabled, the socket is
+loopback, the Host is the configured public API host and the Cloudflare IP
+header is a valid IP address. `X-Forwarded-For` is never trusted. Keep the origin
+loopback endpoint exclusive to the Tunnel/local operators and verify this
+assumption before enabling forwarding trust.
 
 ### Ubuntu Service
 
@@ -214,12 +421,17 @@ sudo -n systemctl status off-record-xp.service --no-pager
 sudo -n journalctl -u off-record-xp.service -n 30 --no-pager
 ```
 
-The process restarts after crashes and reboots, with a 320 MiB memory limit.
+The process restarts after crashes and reboots, with a 320 MiB memory limit
+and a 45-second graceful shutdown budget for active HTTP/Discord operations.
 SQLite checkpoints run every minute and at graceful shutdown. Startup and
 detected Gateway disconnects discard live voice sessions, never carrying their
-timers across downtime. Reconnection fetches members and resets XP for tracked
-members who are now absent. Activity during outages is not guaranteed to be
-recovered; a leave followed by rejoin entirely during an outage cannot be detected.
+timers across downtime. Reconnection fetches members and applies the configured
+leave policy to tracked members who are now absent. Stored Discord join
+timestamps detect offline leave/rejoin cycles after the first membership
+baseline, applying the same reset policy. An older join snapshot cannot
+overwrite a newer recorded join. Before the initial baseline, an offline
+leave/rejoin cannot be inferred. Activity during outages is not guaranteed to
+be recovered.
 Disconnect detection is not instantaneous, and the last incomplete interval
 can be lost. Always Free compute can be reclaimed and has no uptime guarantee;
 systemd cannot restore a deleted VM. No paid resources are provisioned by these
@@ -241,7 +453,33 @@ replace `xp.sqlite` with that snapshot, remove stale `xp.sqlite-wal` and
 `xp.sqlite-shm` sidecars, restore service ownership and mode 600, then start
 the service. Keep a copy of the previous files before replacement.
 
-Tests: `npx mocha test/xp.test.js`. The repository-wide suite remains `npm test`.
+After restoring an upgraded database, keep the service stopped and invalidate
+all restored authentication before admitting traffic:
+
+```sh
+sudo -n -u off-record-xp /usr/local/bin/node /opt/off-record-xp/src/xp-api-maintenance.js \
+  --database /var/lib/off-record-xp/xp.sqlite --invalidate-auth --verify-ledger
+```
+
+The offline verifier checks each intermediate ledger balance and the final
+member balance using exact integers, reports mismatches and exits unsuccessfully
+when reconciliation fails. It never silently repairs balances. Keep the service
+stopped if it reports an error. Reconcile current Discord membership/join times,
+actual purchased roles, pending/review orders and any backup-loss interval
+before resuming XP collection and economic actions. Restoring SQLite does not
+undo roles already granted on Discord; do not blindly refund an ambiguous
+order. Preserve financial and entitlement history, and audit manual corrections.
+
+Tests: `npx --no-install mocha 'test/xp*.test.js'`. The repository-wide suite
+remains `npm test`. The XP tests include real HTTP/OAuth/service integration,
+1,000-request overload shedding, 365,000-record attendance migration and a
+100-member check-in burst with explicit three-second/320 MiB budgets.
+
+Production rollout still requires a real API hostname, private OAuth
+credentials and redirect registration, configured Tunnel, AEM publication,
+guild command registration and live Discord acceptance tests. Local mocked
+Discord tests do not prove external role delivery, nickname hierarchy or
+browser cookie behavior against the real production hosts.
 
 ## Questions?
 
