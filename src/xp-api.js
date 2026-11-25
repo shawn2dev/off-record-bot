@@ -458,6 +458,12 @@ export class XpApi {
       if (result.retryAfter)
         response.setHeader('Retry-After', String(result.retryAfter));
       if (url?.pathname === '/auth/callback') {
+        console.warn('XP OAuth callback rejected.', {
+          code: result.body.error.code,
+          loginCookiePresent: Boolean(
+            this.auth.readCookie(request.headers.cookie, this.auth.loginCookie),
+          ),
+        });
         this.redirect(
           response,
           this.auth.redirect({ offrecord_error: 'login_failed' }),

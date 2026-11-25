@@ -619,6 +619,42 @@ describe('Authenticated HTTP API', () => {
     );
   });
 
+  it('logs only safe diagnostics when an OAuth callback is rejected', async () => {
+    const warning = sinon.stub(console, 'warn');
+    const state = random();
+    const marker = random();
+    try {
+      const callback = await fetch(
+        `${base}/auth/callback?${new URLSearchParams({
+          state,
+          code: 'private-provider-code',
+        })}`,
+        {
+          headers: {
+            Cookie: `${running.api.auth.loginCookie}=${marker}`,
+          },
+          redirect: 'manual',
+        },
+      );
+      expect(callback.status).to.equal(303);
+      expect(
+        new URL(callback.headers.get('location')).searchParams.get(
+          'offrecord_error',
+        ),
+      ).to.equal('login_failed');
+      expect(warning.calledOnce).to.equal(true);
+      expect(warning.firstCall.args[1]).to.deep.equal({
+        code: 'INVALID_LOGIN',
+        loginCookiePresent: true,
+      });
+      const logged = JSON.stringify(warning.args);
+      for (const secret of [state, marker, 'private-provider-code'])
+        expect(logged).not.to.contain(secret);
+    } finally {
+      warning.restore();
+    }
+  });
+
   it('completes the actual HTTP redirect and code exchange without third-party cookies', async () => {
     const values = proof();
     const query = new URLSearchParams({
