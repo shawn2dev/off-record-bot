@@ -251,6 +251,13 @@ queues 50 members per batch and automatically continues a persisted sweep;
 clients must not loop over the sync endpoint. Role and nickname jobs have
 leases, stale-worker fencing, bounded retries and visible review states.
 
+For an operational pause without changing any current nicknames, set
+`XP_NICKNAME_PAUSED=true` in the private bot environment and restart the bot.
+This freezes nickname job processing and automatic sweep advancement, including
+name restoration; XP tracking, commands and role delivery remain available.
+Pending jobs are preserved. Set it back to `false` and restart to resume.
+Unlike this pause, disabling nicknames in dashboard settings restores names.
+
 ### Discord Setup
 
 Create a **new** Discord application. Enable **Server Members Intent** in its

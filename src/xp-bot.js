@@ -112,12 +112,16 @@ export function readXpConfig(environment = process.env) {
       'XP_EXCLUDED_CHANNEL_IDS must contain comma-separated channel IDs.',
     );
   }
+  const nicknamePaused = environment.XP_NICKNAME_PAUSED ?? 'false';
+  if (!['true', 'false'].includes(nicknamePaused))
+    throw new Error('XP_NICKNAME_PAUSED must be true or false.');
   return {
     token,
     applicationId: environment.XP_APPLICATION_ID,
     guildId: environment.XP_GUILD_ID,
     databasePath: environment.XP_DATABASE_PATH || 'storage/xp.sqlite',
     excludedChannelIds,
+    nicknamePaused: nicknamePaused === 'true',
   };
 }
 
@@ -381,7 +385,10 @@ export async function run() {
     guildId: config.guildId,
     discord,
     isAvailable,
+    nicknamePaused: config.nicknamePaused,
   });
+  if (config.nicknamePaused)
+    console.warn('XP nickname processing is paused by XP_NICKNAME_PAUSED.');
   const stop = async () => {
     if (stopping) return;
     stopping = true;

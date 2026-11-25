@@ -78,6 +78,7 @@ export class XpEconomy {
       clock = Date.now,
       rng = randomInt,
       isAvailable = () => true,
+      nicknamePaused = false,
     },
   ) {
     this.store = store;
@@ -87,6 +88,7 @@ export class XpEconomy {
     this.clock = clock;
     this.rng = rng;
     this.isAvailable = isAvailable;
+    this.nicknamePaused = nicknamePaused;
     this.closed = false;
     this.running = null;
     this.activeOrders = new Map();
@@ -1395,11 +1397,13 @@ export class XpEconomy {
       await Promise.all(this.activeOrders.values());
       return;
     }
-    const sweep = this.db
-      .prepare(
-        'SELECT * FROM xp_nickname_sweeps WHERE guild_id = ? AND active = 1',
-      )
-      .get(this.guildId);
+    const sweep = this.nicknamePaused
+      ? null
+      : this.db
+          .prepare(
+            'SELECT * FROM xp_nickname_sweeps WHERE guild_id = ? AND active = 1',
+          )
+          .get(this.guildId);
     if (sweep)
       this.store.transaction(() => {
         const rows = this.db
@@ -1425,7 +1429,7 @@ export class XpEconomy {
       )
       .get(this.guildId, this.clock(), this.clock());
     if (order) await this.processOrder(order.id);
-    if (!this.closed && this.isAvailable()) {
+    if (!this.nicknamePaused && !this.closed && this.isAvailable()) {
       const job = this.store.claimJob(this.guildId, this.clock());
       if (job) {
         this.nicknameRunning = true;

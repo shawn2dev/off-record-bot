@@ -394,7 +394,19 @@ describe('XP commands and configuration', () => {
     expect(readXpConfig(environment)).to.include({
       guildId: environment.XP_GUILD_ID,
       databasePath: 'storage/xp.sqlite',
+      nicknamePaused: false,
     });
+    expect(
+      readXpConfig({ ...environment, XP_NICKNAME_PAUSED: 'true' })
+        .nicknamePaused,
+    ).to.equal(true);
+    expect(
+      readXpConfig({ ...environment, XP_NICKNAME_PAUSED: 'false' })
+        .nicknamePaused,
+    ).to.equal(false);
+    expect(() =>
+      readXpConfig({ ...environment, XP_NICKNAME_PAUSED: 'yes' }),
+    ).to.throw('XP_NICKNAME_PAUSED');
     expect(readXpConfig(environment).excludedChannelIds).to.have.length(2);
     expect(() =>
       readXpConfig({ ...environment, XP_DISCORD_TOKEN: 'replace-me' }),

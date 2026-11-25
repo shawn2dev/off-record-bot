@@ -777,6 +777,80 @@ describe('XP economy transactions and durable recovery', () => {
     expect(members.get(bob).nickname).to.equal(null);
   });
 
+  it('pauses nickname changes and restorations durably without advancing sweeps, then resumes', async () => {
+    for (let index = 0; index < 3; index += 1) await economy.tick();
+    const applied = members.get(alice).nickname;
+    expect(applied).to.match(/^\[lv\.0\] /);
+    await economy.close();
+    economy = new XpEconomy(store, {
+      guildId,
+      discord,
+      clock: () => now,
+      nicknamePaused: true,
+    });
+    nicknameCalls.length = 0;
+    await credit(alice, 1000);
+    await economy.execute('settings.update', owner, {
+      section: 'nickname',
+      version: 0,
+      patch: { enabled: false },
+    });
+    const jobs = () =>
+      store.database
+        .prepare('SELECT id, state, attempts FROM xp_jobs ORDER BY id')
+        .all();
+    const pending = jobs();
+    expect(pending.some((job) => job.state === 'pending')).to.equal(true);
+    for (let index = 0; index < 5; index += 1) await economy.tick();
+    expect(nicknameCalls).to.deep.equal([]);
+    expect(members.get(alice).nickname).to.equal(applied);
+    expect(jobs()).to.deep.equal(pending);
+    expect(
+      store.database
+        .prepare(
+          'SELECT active, after_user_id FROM xp_nickname_sweeps WHERE guild_id = ?',
+        )
+        .get(guildId),
+    ).to.include({ active: 1, after_user_id: '' });
+    await economy.close();
+    economy = new XpEconomy(store, {
+      guildId,
+      discord,
+      clock: () => now,
+    });
+    for (let index = 0; index < 5; index += 1) await economy.tick();
+    expect(members.get(alice).nickname).to.equal(null);
+    expect(nicknameCalls.length).to.be.greaterThan(0);
+  });
+
+  it('continues pending role delivery while nickname processing is paused', async () => {
+    await economy.close();
+    economy = new XpEconomy(store, {
+      guildId,
+      discord,
+      clock: () => now,
+      nicknamePaused: true,
+    });
+    await credit(alice);
+    const { product: saved } = await product();
+    const addRole = discord.addRole;
+    discord.addRole = async () => {
+      throw Object.assign(new Error('rate limited'), { retryAfter: 60000 });
+    };
+    const result = await economy.execute('purchase', alice, {
+      productId: saved.id,
+      version: 1,
+      key: 'paused-nickname-role',
+    });
+    expect(economy.order(result.order.id).state).to.equal('pending');
+    discord.addRole = addRole;
+    now += 60000;
+    await economy.tick();
+    expect(economy.order(result.order.id).state).to.equal('completed');
+    expect(roleCalls).to.deep.equal([[alice, roleId]]);
+    expect(nicknameCalls).to.deep.equal([]);
+  });
+
   it('handles user renames, role exclusions, template replacement and ignores Gateway echoes', async () => {
     members.get(alice).nickname = '[lv.9] 원래이름';
     for (let index = 0; index < 3; index += 1) await economy.tick();
