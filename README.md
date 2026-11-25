@@ -386,8 +386,8 @@ The existing Workers are separate applications and must not be overwritten.
 1. Install the official `cloudflared` package on Oracle and create a named
    Tunnel. Store its private credentials on Oracle only.
 2. Run `sudo -n bash scripts/install-xp-tunnel.sh --vpc`. Configure its Tunnel
-   UUID using `deploy/xp/cloudflared-vpc.example.yml`; enable `warp-routing`,
-   retain the public `http_status:404` catch-all, and keep both configuration
+   UUID using `deploy/xp/cloudflared-vpc.example.yml`; retain the public
+   `http_status:404` catch-all, and keep both configuration
    and credentials root-owned, group `off-record-tunnel`, mode 640.
 3. Create an HTTP VPC Service in the same Cloudflare account, bound only to
    that Tunnel's `127.0.0.1:8080`. No DNS zone or public hostname route is needed.
