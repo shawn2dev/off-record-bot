@@ -1,0 +1,9 @@
+tunnel: REPLACE_WITH_NAMED_TUNNEL_UUID
+credentials-file: /etc/cloudflared/off-record.json
+metrics: 127.0.0.1:20241
+
+warp-routing:
+  enabled: true
+
+ingress:
+  - service: http_status:404

@@ -20,9 +20,19 @@ if ! id -u off-record-xp >/dev/null 2>&1; then
 fi
 install -d -m 755 "$application/src" /usr/local/lib/off-record-xp
 install -d -m 700 -o off-record-xp -g off-record-xp /var/lib/off-record-xp
+install_dependencies=true
+if cmp -s "$project/deploy/xp/package.json" "$application/package.json" &&
+  cmp -s "$project/deploy/xp/package-lock.json" "$application/package-lock.json" &&
+  [[ -f "$application/node_modules/discord.js/package.json" ]]; then
+  install_dependencies=false
+fi
 install -m 644 "$project"/src/xp*.js "$application/src/"
 install -m 644 "$project"/deploy/xp/package.json "$project"/deploy/xp/package-lock.json "$application/"
-npm ci --prefix "$application" --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+if [[ "$install_dependencies" == true ]]; then
+  npm ci --prefix "$application" --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+else
+  printf '%s\n' 'Runtime dependency manifests unchanged; preserving installed dependencies.'
+fi
 install -m 755 "$project/scripts/backup-xp.sh" /usr/local/lib/off-record-xp/backup-xp.sh
 install -m 644 "$project"/deploy/xp/off-record-xp*.service "$project"/deploy/xp/off-record-xp*.timer /etc/systemd/system/
 if [[ ! -f /etc/off-record-xp.env ]]; then

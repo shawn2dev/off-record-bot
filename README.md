@@ -295,8 +295,9 @@ with the Korean command list for this application and guild.
 
 The optional dashboard API shares the Gateway process and SQLite store. It is
 disabled by default and binds only to `127.0.0.1` or `::1`. Do not expose its
-port through the Oracle firewall. The AEM site remains the frontend; a named
-Cloudflare Tunnel supplies the fixed HTTPS API hostname.
+port through the Oracle firewall. The AEM site remains the frontend. The
+dedicated `off-record-xp-api` Worker provides a fixed `workers.dev` HTTPS origin;
+a VPC Service connects it to Oracle through a private named Cloudflare Tunnel.
 
 Configure these values privately in `/etc/off-record-xp.env`:
 
@@ -375,7 +376,53 @@ HTTP protection is independent of Cloudflare paid features:
   Expired authentication is cleaned in batches of at most 200 rows per table.
   Financial history and idempotency records are not expired with login data.
 
-Tunnel setup is deliberately separate from bot installation:
+#### workers.dev gateway (current deployment)
+
+The public API origin is
+`https://off-record-xp-api.cbycdy2.workers.dev`. Register
+`https://off-record-xp-api.cbycdy2.workers.dev/auth/callback` in Discord.
+The existing Workers are separate applications and must not be overwritten.
+
+1. Install the official `cloudflared` package on Oracle and create a named
+   Tunnel. Store its private credentials on Oracle only.
+2. Run `sudo -n bash scripts/install-xp-tunnel.sh --vpc`. Configure its Tunnel
+   UUID using `deploy/xp/cloudflared-vpc.example.yml`; enable `warp-routing`,
+   retain the public `http_status:404` catch-all, and keep both configuration
+   and credentials root-owned, group `off-record-tunnel`, mode 640.
+3. Create an HTTP VPC Service in the same Cloudflare account, bound only to
+   that Tunnel's `127.0.0.1:8080`. No DNS zone or public hostname route is needed.
+4. Configure the service ID and exact public API/site origins in
+   `deploy/xp/wrangler.toml`, then deploy from this repository:
+
+   ```sh
+   npx --no-install wrangler deploy --config deploy/xp/wrangler.toml
+   ```
+
+   Do not use `npm run publish` for this gateway: it deploys the separate
+   legacy `shawnybot` Worker.
+5. Configure the Oracle API origin, OAuth secret, dashboard return URL and
+   `XP_API_TRUST_TUNNEL=true`; enable the bot/API and the dedicated Tunnel
+   service. Verify public `/health`, denied Origins, redirects/cookies and
+   real browser login/logout.
+
+The gateway streams requests to its bound service, never arbitrary upstreams.
+It preserves the public Host, Cloudflare client IP, authentication headers and
+separate cookies, strips unrelated proxy headers, and never follows OAuth
+redirects, caches responses or retries mutations. The Oracle API remains
+responsible for body/header limits, authentication, rate limits and admission.
+Upstream failures return explicit non-cacheable Korean `503` errors.
+Do not enable request URL/query/body logging on the Worker.
+
+[Workers VPC](https://developers.cloudflare.com/workers-vpc/) is currently beta
+and free during beta; its APIs and pricing can change. Workers Free has a
+shared account-wide limit of 100,000 requests/day. Exhaustion can interrupt this
+API and other Workers in the account, even though the Oracle Gateway bot
+continues running. Plan changes require explicit operator approval.
+
+#### Custom-domain Tunnel alternative
+
+Tunnel setup is deliberately separate from bot installation. If replacing
+Workers VPC with a directly published hostname:
 
 1. Install the official `cloudflared` package on Oracle and create a named
    Tunnel in the Cloudflare account controlling the API domain.

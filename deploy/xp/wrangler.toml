@@ -1,0 +1,15 @@
+name = "off-record-xp-api"
+account_id = "d507f1b025fed0a3784d6f7760e315d8"
+main = "../../src/xp-worker.js"
+compatibility_date = "2026-11-25"
+workers_dev = true
+preview_urls = false
+
+[vars]
+XP_API_ORIGIN = "https://off-record-xp-api.cbycdy2.workers.dev"
+XP_API_ALLOWED_SITE_ORIGINS = "https://main--off-record-bot-site--shawn2dev.aem.live"
+
+[[vpc_services]]
+binding = "PRIVATE_API"
+service_id = "01a214d5-8803-7bd0-a0aa-4e2a864afcdf"
+remote = true

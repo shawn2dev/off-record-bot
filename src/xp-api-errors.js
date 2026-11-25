@@ -9,6 +9,8 @@ const messages = Object.freeze({
   INVALID_CODE: '로그인 확인 코드가 올바르지 않거나 만료되었습니다.',
   PROVIDER_UNAVAILABLE:
     '디스코드 로그인에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',
+  UPSTREAM_UNAVAILABLE:
+    '오프레코드 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',
   NOT_MEMBER: '오프레코드 서버에 가입한 회원만 이용할 수 있습니다.',
   FORBIDDEN: '이 작업을 실행할 권한이 없습니다.',
   INVALID_REQUEST: '요청 내용이 올바르지 않습니다.',
