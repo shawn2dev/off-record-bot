@@ -5,6 +5,9 @@ compatibility_date = "2026-11-25"
 workers_dev = true
 preview_urls = false
 
+[observability]
+enabled = false
+
 [vars]
 XP_API_ORIGIN = "https://off-record-xp-api.cbycdy2.workers.dev"
 XP_API_ALLOWED_SITE_ORIGINS = "https://main--off-record-bot-site--shawn2dev.aem.live"
