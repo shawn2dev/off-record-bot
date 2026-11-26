@@ -28,7 +28,7 @@ const defaults = {
   lifecycle: { resetOnLeave: true },
   access: { adminRoles: {} },
   gift: { enabled: true, feePercent: 15 },
-  nickname: { enabled: true, template: '[lv.{레벨}]', excludedRoleIds: [] },
+  nickname: { enabled: false, template: '[lv.{레벨}]', excludedRoleIds: [] },
   raffle: {
     maxWinners: 50,
     maxAmountXp: 10000,

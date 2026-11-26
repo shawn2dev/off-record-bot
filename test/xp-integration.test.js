@@ -173,6 +173,18 @@ describe('Dashboard and bot shared-service integration', () => {
   });
 
   it('runs gifts, versioned role purchases, four games, raffles and nickname jobs against one ledger', async () => {
+    const initialNickname = await call(XP_OWNER_ID, '/api/settings/nickname');
+    expect(initialNickname.value.enabled).to.equal(false);
+    await call(
+      XP_OWNER_ID,
+      '/api/settings/nickname',
+      {
+        version: initialNickname.version,
+        patch: { enabled: true },
+      },
+      200,
+      'PUT',
+    );
     await call(XP_OWNER_ID, '/api/xp/adjust', {
       userId: USER,
       amount: 1000,

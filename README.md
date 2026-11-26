@@ -243,8 +243,10 @@ or unrepresentable probability/payout configurations are rejected, not silently
 clipped. Raffles preview an expiring candidate snapshot, then revalidate
 membership and settle unique winners atomically on explicit confirmation.
 
-The one-second durable worker updates level prefixes on both level increases
-and decreases, including spending. The default is `[lv.{레벨}]`; template and
+Level nickname prefixes are disabled by default and require an explicit opt-in
+in dashboard settings. When enabled, the one-second durable worker updates
+prefixes on both level increases and decreases, including spending.
+The default template is `[lv.{레벨}]`; template and
 excluded roles are configurable. Original names are preserved, and disabling
 or excluding restores only a bot-applied nickname. Full-server synchronization
 queues 50 members per batch and automatically continues a persisted sweep;
@@ -264,6 +266,9 @@ Create a **new** Discord application. Enable **Server Members Intent** in its
 Bot settings. Message Content and Presence intents are not needed. Leave
 **Interactions Endpoint URL empty** for this application: commands are received
 through the Gateway. Invite it with `bot` and `applications.commands` scopes;
+include both scopes in **Installation > Guild Install > Default Install
+Settings** as well. An `applications.commands`-only installation does not add
+the bot member to the server.
 `View Channels` is required for the message channels being tracked. Grant
 `Manage Roles` for shop delivery and `Manage Nicknames` for level prefixes.
 Place the bot above the roles it sells and members it renames. Discord
@@ -276,6 +281,16 @@ file for local use. Optional `XP_EXCLUDED_CHANNEL_IDS` is a comma-separated list
 For local development, set `XP_DATABASE_PATH=storage/xp.sqlite`. Never send the
 token through chat or commit it. Commands are guild-scoped and replace only
 the command list for the specified XP application and guild.
+
+The temporary test guild is `858648961811873824`; the production guild is
+`1448354755012333713`. `XP_GUILD_ID` selects the one active guild for both the
+bot and dashboard API. Keep the database when switching: guild-scoped XP,
+attendance, products and settings remain separate. Register commands for the
+new guild and remove this XP application's obsolete guild commands from the
+previous guild; invalidate authentication when switching guilds. In the test
+guild, leave nickname settings OFF and use `XP_NICKNAME_PAUSED=false` so an
+explicit ON setting can be tested. Do not resume the production guild without
+checking its nickname settings.
 
 ```sh
 npm run xp:check

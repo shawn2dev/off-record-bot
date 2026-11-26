@@ -127,6 +127,12 @@ describe('XP economy transactions and durable recovery', () => {
       },
       ...extra,
     });
+  const enableNicknames = () =>
+    economy.execute('settings.update', owner, {
+      section: 'nickname',
+      version: 0,
+      patch: { enabled: true },
+    });
 
   it('uses whole-XP floor fees, permits splitting, and keeps activity separate', async () => {
     await credit(alice);
@@ -755,7 +761,23 @@ describe('XP economy transactions and durable recovery', () => {
     );
   });
 
+  it('leaves nicknames unchanged by default across level changes until explicitly enabled', async () => {
+    expect(defaultXpSettings('nickname').enabled).to.equal(false);
+    members.get(alice).nickname = '[Lv.9] 기존 별명';
+    members.get(bob).nickname = '[lv.7] 기존 별명';
+    for (let index = 0; index < 3; index += 1) await economy.tick();
+    await credit(alice, 1000);
+    await economy.tick();
+    expect(nicknameCalls).to.deep.equal([]);
+    expect(members.get(alice).nickname).to.equal('[Lv.9] 기존 별명');
+    expect(members.get(bob).nickname).to.equal('[lv.7] 기존 별명');
+    await enableNicknames();
+    for (let index = 0; index < 3; index += 1) await economy.tick();
+    expect(members.get(alice).nickname).to.equal('[lv.5] [Lv.9] 기존 별명');
+  });
+
   it('preserves original names, limits Unicode code points and restores only applied prefixes', async () => {
+    await enableNicknames();
     members.get(alice).nickname = '😀'.repeat(32);
     await economy.tick();
     await economy.tick();
@@ -769,7 +791,7 @@ describe('XP economy transactions and durable recovery', () => {
     expect(members.get(alice).nickname.match(/\[lv\./g)).to.have.length(1);
     await economy.execute('settings.update', owner, {
       section: 'nickname',
-      version: 0,
+      version: 1,
       patch: { enabled: false },
     });
     for (let index = 0; index < 5; index += 1) await economy.tick();
@@ -778,6 +800,7 @@ describe('XP economy transactions and durable recovery', () => {
   });
 
   it('pauses nickname changes and restorations durably without advancing sweeps, then resumes', async () => {
+    await enableNicknames();
     for (let index = 0; index < 3; index += 1) await economy.tick();
     const applied = members.get(alice).nickname;
     expect(applied).to.match(/^\[lv\.0\] /);
@@ -792,7 +815,7 @@ describe('XP economy transactions and durable recovery', () => {
     await credit(alice, 1000);
     await economy.execute('settings.update', owner, {
       section: 'nickname',
-      version: 0,
+      version: 1,
       patch: { enabled: false },
     });
     const jobs = () =>
@@ -852,6 +875,7 @@ describe('XP economy transactions and durable recovery', () => {
   });
 
   it('handles user renames, role exclusions, template replacement and ignores Gateway echoes', async () => {
+    await enableNicknames();
     members.get(alice).nickname = '[lv.9] 원래이름';
     for (let index = 0; index < 3; index += 1) await economy.tick();
     expect(members.get(alice).nickname).to.equal('[lv.0] [lv.9] 원래이름');
@@ -870,7 +894,7 @@ describe('XP economy transactions and durable recovery', () => {
     ).to.equal(count);
     await economy.execute('settings.update', owner, {
       section: 'nickname',
-      version: 0,
+      version: 1,
       patch: { template: '등급{레벨}', excludedRoleIds: [roleId] },
     });
     members.get(alice).roleIds = [roleId];
@@ -884,6 +908,7 @@ describe('XP economy transactions and durable recovery', () => {
   });
 
   it('persists nickname failures without reverting XP and stops after three automatic attempts', async () => {
+    await enableNicknames();
     members.get(alice).manageable = false;
     await credit(alice, 1000);
     for (let index = 0; index < 10; index += 1) {
@@ -901,6 +926,7 @@ describe('XP economy transactions and durable recovery', () => {
   });
 
   it('treats a cleared nickname as a real user rename rather than a null echo', async () => {
+    await enableNicknames();
     members.get(alice).nickname = '기존 별명';
     for (let index = 0; index < 3; index += 1) await economy.tick();
     const previous = structuredClone(members.get(alice));
@@ -912,7 +938,7 @@ describe('XP economy transactions and durable recovery', () => {
     );
     await economy.execute('settings.update', owner, {
       section: 'nickname',
-      version: 0,
+      version: 1,
       patch: { enabled: false },
     });
     for (let index = 0; index < 4; index += 1) await economy.tick();
@@ -920,6 +946,7 @@ describe('XP economy transactions and durable recovery', () => {
   });
 
   it('restores an applied-but-unacknowledged nickname and preserves offline renames', async () => {
+    await enableNicknames();
     members.get(alice).nickname = '원래 별명';
     for (let index = 0; index < 3; index += 1) await economy.tick();
     await credit(alice, 1000);
@@ -934,7 +961,7 @@ describe('XP economy transactions and durable recovery', () => {
     now += 10000;
     await economy.execute('settings.update', owner, {
       section: 'nickname',
-      version: 0,
+      version: 1,
       patch: { enabled: false },
     });
     for (let index = 0; index < 4; index += 1) await economy.tick();
@@ -942,7 +969,7 @@ describe('XP economy transactions and durable recovery', () => {
     members.get(alice).nickname = '오프라인 변경';
     await economy.execute('settings.update', owner, {
       section: 'nickname',
-      version: 1,
+      version: 2,
       patch: { enabled: true },
     });
     for (let index = 0; index < 4; index += 1) await economy.tick();
@@ -950,6 +977,7 @@ describe('XP economy transactions and durable recovery', () => {
   });
 
   it('continues a full nickname sync durably in <=50-member internal batches', async () => {
+    await enableNicknames();
     for (let index = 0; index < 100; index += 1) {
       const id = String(700000000000000000n + BigInt(index));
       members.set(id, human(id));
