@@ -322,6 +322,11 @@ async function ordersReply(economy, userId, expires, before) {
 
 export async function economyReply(economy, interaction) {
   const userId = interaction.user.id;
+  const namedResult = async (action, input) =>
+    economy.store.withMemberNames(
+      economy.guildId,
+      await economy.execute(action, userId, input),
+    );
   const key = interaction.id;
   const expires = Math.floor(Date.now() / 1000) + 600;
   if (interaction.customId?.startsWith('xe:')) {
@@ -374,7 +379,7 @@ export async function economyReply(economy, interaction) {
             .setTitle(XP_KO.raffleTitle)
             .setDescription(
               XP_KO.raffleResult(
-                await economy.execute('raffle.execute', userId, {
+                await namedResult('raffle.execute', {
                   previewId: extra,
                   key: `raffle:${extra}`,
                 }),
@@ -406,7 +411,7 @@ export async function economyReply(economy, interaction) {
   if (name === XP_KO.giftCommand)
     return payload(
       XP_KO.giftResult(
-        await economy.execute('gift.send', userId, {
+        await namedResult('gift.send', {
           userId: options.getUser(XP_KO.memberOption).id,
           amount: options.getInteger(XP_KO.amountOption),
           key,
@@ -416,7 +421,7 @@ export async function economyReply(economy, interaction) {
   if (name === XP_KO.addCommand || name === XP_KO.removeCommand)
     return payload(
       XP_KO.adjustResult(
-        await economy.execute('xp.adjust', userId, {
+        await namedResult('xp.adjust', {
           userId: options.getUser(XP_KO.memberOption).id,
           amount: options.getInteger(XP_KO.amountOption),
           operation: name === XP_KO.addCommand ? 'add' : 'remove',

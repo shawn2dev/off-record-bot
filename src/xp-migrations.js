@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function attendanceSummarySql(filter = '') {
   return `
@@ -210,6 +210,21 @@ export function migrateXpDatabase(database) {
           BEGIN ${refreshAttendanceSql('OLD')} END;
         CREATE TRIGGER xp_attendance_update_summary AFTER UPDATE ON xp_attendance
           BEGIN ${refreshAttendanceSql('OLD')} ${refreshAttendanceSql('NEW')} END;
+      `);
+    }
+    if (version < 4) {
+      database.exec(`
+        CREATE TABLE xp_member_names (
+          guild_id TEXT NOT NULL, user_id TEXT NOT NULL,
+          display_name TEXT NOT NULL CHECK (length(display_name) > 0),
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (guild_id, user_id)
+        );
+        INSERT INTO xp_member_names (guild_id, user_id, display_name, updated_at)
+          SELECT guild_id, user_id,
+            COALESCE(applied_name, original_nickname, base_name), updated_at
+          FROM xp_nicknames
+          WHERE length(COALESCE(applied_name, original_nickname, base_name)) > 0;
       `);
     }
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);

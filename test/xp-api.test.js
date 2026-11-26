@@ -638,6 +638,89 @@ describe('Authenticated HTTP API', () => {
       redirect: 'manual',
     });
 
+  it('resolves bounded guild-scoped member names without fetching every requested Discord member', async () => {
+    store.rememberMemberNames(GUILD, [
+      { userId: USER, displayName: '서버 별명' },
+      { userId: XP_OWNER_ID, displayName: '운영자 별명' },
+    ]);
+    store.rememberMemberNames('another-guild', [
+      { userId: USER, displayName: '다른 서버 이름' },
+    ]);
+    const lookup = sinon.spy(running.api.auth.discord, 'member');
+    const response = await request(
+      base,
+      config,
+      token,
+      `/api/members?ids=${USER},${XP_OWNER_ID},${USER}`,
+    );
+    expect(response.status).to.equal(200);
+    expect(await response.json()).to.deep.equal({
+      items: [
+        { userId: USER, displayName: '서버 별명' },
+        { userId: XP_OWNER_ID, displayName: '운영자 별명' },
+      ],
+    });
+    expect(lookup.callCount).to.equal(1);
+    expect(lookup.firstCall.args[0]).to.equal(USER);
+    expect(
+      (await request(base, config, null, `/api/members?ids=${USER}`)).status,
+    ).to.equal(401);
+  });
+
+  it('rejects malformed and oversized name lookups while retaining unknown historical IDs internally', async () => {
+    for (const query of [
+      '',
+      '?ids=',
+      '?ids=invalid',
+      `?ids=${USER}&ids=${USER}`,
+      `?ids=${Array(51).fill(USER).join(',')}`,
+    ]) {
+      expect(
+        (await request(base, config, token, `/api/members${query}`)).status,
+      ).to.equal(400);
+    }
+    const response = await request(
+      base,
+      config,
+      token,
+      `/api/members?ids=${USER}`,
+    );
+    expect(await response.json()).to.deep.equal({
+      items: [{ userId: USER, displayName: null }],
+    });
+  });
+
+  it('decorates ranking and mutation responses without changing stored requests or executing extra economy actions', async () => {
+    store.rememberMemberNames(GUILD, [
+      { userId: XP_OWNER_ID, displayName: '받는 회원' },
+    ]);
+    const body = { userId: XP_OWNER_ID, amount: 10, key: 'name-decoration' };
+    const response = await request(base, config, token, '/api/gifts', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    expect(response.status).to.equal(200);
+    expect((await response.json()).input).to.deep.equal({
+      ...body,
+      displayName: '받는 회원',
+    });
+    expect(calls.at(-1).input).to.deep.equal(body);
+    store.rememberMemberNames(GUILD, [
+      { userId: USER, displayName: '랭킹 회원' },
+    ]);
+    store.message(GUILD, USER, 'named-ranking', 1);
+    const rankings = await request(
+      base,
+      config,
+      token,
+      '/api/rankings?kind=xp',
+    );
+    expect((await rankings.json()).items[0]).to.include({
+      userId: USER,
+      displayName: '랭킹 회원',
+    });
+  });
+
   it('serves private no-store JSON and checks membership independently of CORS and cookies', async () => {
     const result = await request(base, config, token, '/api/me');
     expect(result.status).to.equal(200);

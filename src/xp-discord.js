@@ -26,7 +26,10 @@ export function normalizeDiscordMember(member) {
     bot: member.user.bot,
     joinedAt: member.joinedTimestamp,
     displayName:
-      member.displayName ?? member.user.globalName ?? member.user.username,
+      member.nickname ??
+      member.displayName ??
+      member.user.globalName ??
+      member.user.username,
     nickname: member.nickname ?? null,
     manageable:
       member.manageable &&
@@ -38,7 +41,7 @@ export function normalizeDiscordMember(member) {
   };
 }
 
-export function createXpDiscord(client, guildId) {
+export function createXpDiscord(client, guildId, store) {
   const readCache = new Map();
   const readInFlight = new Map();
   let revision = 0;
@@ -100,12 +103,17 @@ export function createXpDiscord(client, guildId) {
     return structuredClone(await pending);
   };
   const fetchMember = async (userId) => {
+    const observedAt = Date.now();
+    const observedRevision = revision;
     try {
-      return normalizeDiscordMember(
+      const member = normalizeDiscordMember(
         await bounded(() =>
           guild().members.fetch({ user: userId, force: true, cache: false }),
         ),
       );
+      if (observedRevision === revision)
+        store?.rememberMemberNames(guildId, [member], observedAt);
+      return member;
     } catch (error) {
       if (error.code === 10007 || error.code === 10013) return null;
       throw error;
@@ -143,8 +151,14 @@ export function createXpDiscord(client, guildId) {
       return read('roles', fetchRoles, cached);
     },
     async members(roleId) {
+      const observedAt = Date.now();
       const members = await bounded(() =>
         guild().members.fetch({ withPresences: false, time: 4000 }),
+      );
+      store?.rememberMemberNames(
+        guildId,
+        [...members.values()].map(normalizeDiscordMember),
+        observedAt,
       );
       return [...members.values()]
         .filter(

@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertXpSchema, migrateXpDatabase } from './xp-migrations.js';
 import { XpError } from './xp-errors.js';
+import { memberIds, withMemberNames } from './xp-member-names.js';
 import {
   canManageXpSettings,
   defaultXpSettings,
@@ -92,6 +93,50 @@ export class XpStore {
     } finally {
       this.transactionDepth = depth;
     }
+  }
+
+  rememberMemberNames(guildId, members, timestamp = Date.now()) {
+    if (!Number.isSafeInteger(timestamp))
+      throw new TypeError('Member name timestamps must be safe integers.');
+    const statement = this.database.prepare(`
+      INSERT INTO xp_member_names (guild_id, user_id, display_name, updated_at)
+      VALUES (?, ?, ?, ?) ON CONFLICT (guild_id, user_id) DO UPDATE SET
+        display_name = excluded.display_name, updated_at = excluded.updated_at
+      WHERE excluded.updated_at >= xp_member_names.updated_at
+        AND excluded.display_name != xp_member_names.display_name
+    `);
+    this.transaction(() => {
+      for (const member of members) {
+        if (
+          typeof member.userId !== 'string' ||
+          !member.userId ||
+          typeof member.displayName !== 'string' ||
+          !member.displayName
+        )
+          throw new TypeError(
+            'Member names require an identifier and a display name.',
+          );
+        statement.run(guildId, member.userId, member.displayName, timestamp);
+      }
+    });
+  }
+
+  memberNames(guildId, userIds) {
+    const ids = [...new Set(userIds)];
+    if (!ids.length) return {};
+    const rows = this.database
+      .prepare(
+        `
+      SELECT user_id AS userId, display_name AS displayName FROM xp_member_names
+      WHERE guild_id = ? AND user_id IN (${ids.map(() => '?').join(',')})
+    `,
+      )
+      .all(guildId, ...ids);
+    return Object.fromEntries(rows.map((row) => [row.userId, row.displayName]));
+  }
+
+  withMemberNames(guildId, value) {
+    return withMemberNames(value, this.memberNames(guildId, memberIds(value)));
   }
 
   settings(guildId, section) {

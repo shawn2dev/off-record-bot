@@ -53,7 +53,7 @@ export function xpRankingReply(store, guildId, userId, kind, timestamp) {
   if (!rankingKinds.includes(kind)) throw new XpError('INVALID_RANKING');
   const embed = new EmbedBuilder().setColor(0x24805a);
   if (kind === 'xp') {
-    const members = store.leaderboard(guildId);
+    const members = store.withMemberNames(guildId, store.leaderboard(guildId));
     const profile = store.profile(guildId, userId);
     embed
       .setTitle(XP_KO.leaderboardTitle)
@@ -69,7 +69,10 @@ export function xpRankingReply(store, guildId, userId, kind, timestamp) {
             : XP_KO.rankValue(profile.rank),
       });
   } else {
-    const members = store.attendanceLeaderboard(guildId, kind, timestamp);
+    const members = store.withMemberNames(
+      guildId,
+      store.attendanceLeaderboard(guildId, kind, timestamp),
+    );
     const profile = store.attendanceProfile(guildId, userId, timestamp);
     const rank = kind === 'total' ? profile.totalRank : profile.streakRank;
     embed
@@ -165,40 +168,57 @@ export function xpCommands() {
 
 export function xpReply(store, interaction, timestamp) {
   const guildId = interaction.guildId;
+  const userName = (user) => {
+    const member =
+      user.id === interaction.user.id
+        ? interaction.member
+        : interaction.options.getMember?.(XP_KO.memberOption);
+    if (member)
+      return (
+        member.nickname ??
+        member.nick ??
+        member.displayName ??
+        user.globalName ??
+        user.username
+      );
+    return (
+      store.memberNames(guildId, [user.id])[user.id] ??
+      user.globalName ??
+      user.username
+    );
+  };
   const embed = new EmbedBuilder().setColor(0x24805a);
   if (interaction.commandName === XP_KO.rankCommand) {
     const user =
       interaction.options.getUser(XP_KO.memberOption) ?? interaction.user;
     const profile = store.profile(guildId, user.id);
-    embed
-      .setTitle(XP_KO.profileTitle(user.globalName ?? user.username))
-      .addFields(
-        { name: XP_KO.xpLabel, value: String(profile.xp), inline: true },
-        { name: XP_KO.levelLabel, value: String(profile.level), inline: true },
-        {
-          name: XP_KO.rankLabel,
-          value:
-            profile.rank === null
-              ? XP_KO.unranked
-              : XP_KO.rankValue(profile.rank),
-          inline: true,
-        },
-        {
-          name: XP_KO.nextLevelLabel,
-          value: XP_KO.remainingXp(profile.remainingXp),
-          inline: true,
-        },
-        {
-          name: XP_KO.messagesLabel,
-          value: String(profile.messages),
-          inline: true,
-        },
-        {
-          name: XP_KO.voiceLabel,
-          value: XP_KO.voiceTime(profile.voiceMs),
-          inline: true,
-        },
-      );
+    embed.setTitle(XP_KO.profileTitle(userName(user))).addFields(
+      { name: XP_KO.xpLabel, value: String(profile.xp), inline: true },
+      { name: XP_KO.levelLabel, value: String(profile.level), inline: true },
+      {
+        name: XP_KO.rankLabel,
+        value:
+          profile.rank === null
+            ? XP_KO.unranked
+            : XP_KO.rankValue(profile.rank),
+        inline: true,
+      },
+      {
+        name: XP_KO.nextLevelLabel,
+        value: XP_KO.remainingXp(profile.remainingXp),
+        inline: true,
+      },
+      {
+        name: XP_KO.messagesLabel,
+        value: String(profile.messages),
+        inline: true,
+      },
+      {
+        name: XP_KO.voiceLabel,
+        value: XP_KO.voiceTime(profile.voiceMs),
+        inline: true,
+      },
+    );
   } else if (interaction.commandName === XP_KO.leaderboardCommand) {
     return xpRankingReply(store, guildId, interaction.user.id, 'xp', timestamp);
   } else if (interaction.commandName === XP_KO.statsCommand) {
@@ -207,10 +227,7 @@ export function xpReply(store, interaction, timestamp) {
     const stats = store.stats(guildId, user?.id, days, timestamp);
     embed
       .setTitle(
-        XP_KO.statsTitle(
-          user ? (user.globalName ?? user.username) : XP_KO.serverName,
-          days,
-        ),
+        XP_KO.statsTitle(user ? userName(user) : XP_KO.serverName, days),
       )
       .addFields(
         {
@@ -379,7 +396,7 @@ export async function run() {
   let timer;
   let workerTimer;
   let api;
-  const discord = createXpDiscord(client, config.guildId);
+  const discord = createXpDiscord(client, config.guildId, store);
   const isAvailable = () => tracker.active && !stopping && client.isReady();
   const economy = new XpEconomy(store, {
     guildId: config.guildId,
@@ -445,6 +462,7 @@ export async function run() {
       }
       const guild = client.guilds.cache.get(config.guildId);
       if (!guild?.available) throw new Error('Guild is unavailable.');
+      const observedAt = Date.now();
       const members = await guild.members.fetch({
         withPresences: false,
         time: 30000,
@@ -457,6 +475,11 @@ export async function run() {
       )
         return;
       try {
+        store.rememberMemberNames(
+          config.guildId,
+          [...members.values()].map(normalizeDiscordMember),
+          observedAt,
+        );
         tracker.start(guild, members.values(), Date.now());
       } catch {
         fail();
@@ -515,6 +538,10 @@ export async function run() {
     Events.GuildMemberAdd,
     protect((member) => {
       if (member.guild.id === config.guildId) discord.invalidateReadCache();
+      if (member.guild.id === config.guildId)
+        store.rememberMemberNames(config.guildId, [
+          normalizeDiscordMember(member),
+        ]);
       if (member.guild.id === config.guildId && !member.user.bot)
         store.activate(
           config.guildId,
@@ -528,6 +555,10 @@ export async function run() {
     Events.GuildMemberUpdate,
     protect((previous, member) => {
       if (member.guild.id === config.guildId) discord.invalidateReadCache();
+      if (member.guild.id === config.guildId)
+        store.rememberMemberNames(config.guildId, [
+          normalizeDiscordMember(member),
+        ]);
       if (
         tracker.active &&
         member.guild.id === config.guildId &&

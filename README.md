@@ -389,6 +389,7 @@ Do not enable request-URL/query/body logging for OAuth routes.
 | API group | Routes |
 | --- | --- |
 | Identity and rankings | `GET /api/me`, `/api/rankings?kind=xp`, `/api/ledger` |
+| Member display names | `GET /api/members?ids=id1,id2` (up to 50 IDs) |
 | Settings and roles | `GET /api/settings`, `GET/PUT /api/settings/:section`, `GET /api/roles` |
 | Shop and orders | `GET /api/shop`, `POST /api/purchases`, `GET /api/orders` |
 | Product/order management | `POST /api/products`, `PUT /api/products/:id`, `POST /api/orders/:id/action` |
@@ -403,6 +404,19 @@ body after a timeout and inspect transaction/order state before retrying.
 Settings use `{ version, patch }`; stale updates return `409` rather than
 overwriting another administrator. Product edits and purchases also carry the
 displayed product version.
+
+User-facing bot messages and dashboard records use guild nicknames, falling
+back to Discord display names when no nickname exists. Schema v4 stores the
+last confirmed name per guild/user, independently of XP resets and departures.
+Startup member synchronization, Gateway joins/updates and trusted Discord
+reads update these names; older lookups cannot overwrite newer observations.
+Existing nickname records seed historical names during migration.
+Read responses add `displayName` beside `userId` and `actorDisplayName` beside
+`actorId`, including nested audit/raffle data. Unknown historical names are
+`null` and the UI labels them as departed users. IDs and financial snapshots
+remain unchanged; name decoration uses indexed SQLite lookups, not per-row
+Discord requests. The dashboard keeps ID input but resolves names before
+confirmation and renders names in display-only request details.
 
 HTTP protection is independent of Cloudflare paid features:
 

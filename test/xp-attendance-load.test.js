@@ -78,6 +78,7 @@ describe('Persistent attendance summaries', () => {
           DROP TRIGGER xp_attendance_delete_summary;
           DROP TRIGGER xp_attendance_update_summary;
           DROP TABLE xp_attendance_summary;
+          DROP TABLE xp_member_names;
           PRAGMA user_version = 2;
           WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<999)
           INSERT INTO xp_members(guild_id,user_id) SELECT 'load', 'member-' || i FROM n;

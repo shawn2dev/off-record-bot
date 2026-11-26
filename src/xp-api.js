@@ -454,7 +454,11 @@ export class XpApi {
       if (controller.signal.aborted)
         throw new XpApiError('REQUEST_TIMEOUT', 408);
       const result = await this.route(request.method, url, body, context);
-      this.send(response, 200, result);
+      this.send(
+        response,
+        200,
+        this.store.withMemberNames(this.config.guildId, result),
+      );
     } catch (error) {
       const result = xpApiError(error);
       if (result.status >= 500)
@@ -541,6 +545,19 @@ export class XpApi {
                 timestamp,
               ),
             };
+      }
+      if (path === '/api/members') {
+        assertQuery(url, ['ids']);
+        const ids = (url.searchParams.get('ids') ?? '').split(',');
+        if (ids.length > 50 || ids.some((id) => !snowflake(id)))
+          throw new XpApiError('INVALID_REQUEST');
+        const names = this.store.memberNames(guildId, ids);
+        return {
+          items: [...new Set(ids)].map((userId) => ({
+            userId,
+            displayName: names[userId] ?? null,
+          })),
+        };
       }
       if (path === '/api/settings') {
         assertQuery(url, []);

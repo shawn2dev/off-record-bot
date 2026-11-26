@@ -1,4 +1,10 @@
+import { escapeMarkdown } from 'discord.js';
+
+const memberName = (member) =>
+  escapeMarkdown(member.displayName ?? XP_KO.departedMember);
+
 export const XP_KO = Object.freeze({
+  departedMember: '탈퇴한 사용자',
   rankCommand: '랭크',
   rankDescription: '경험치, 레벨, 순위와 누적 활동을 확인합니다.',
   leaderboardCommand: '순위',
@@ -150,15 +156,15 @@ export const XP_KO = Object.freeze({
   orderEntry: (order) =>
     `#${order.id} ${order.product.title} · ${order.amountXp} XP · ${XP_KO.orderStates[order.state] ?? XP_KO.commandFailure}`,
   giftResult: (result) =>
-    `<@${result.userId}>님에게 ${result.receivedXp} XP를 선물했습니다. 차감 ${result.amountXp} XP · 수수료 ${result.feeXp} XP`,
+    `${memberName(result)}님에게 ${result.receivedXp} XP를 선물했습니다. 차감 ${result.amountXp} XP · 수수료 ${result.feeXp} XP`,
   adjustResult: (result) =>
-    `<@${result.userId}>님의 경험치를 ${result.operation === 'add' ? '추가' : '제거'}했습니다. ${result.amountXp} XP · 사유: ${result.reason}`,
+    `${memberName(result)}님의 경험치를 ${result.operation === 'add' ? '추가' : '제거'}했습니다. ${result.amountXp} XP · 사유: ${result.reason}`,
   gameResult: (result) =>
     `결과: ${XP_KO.gameOutcomes[result.outcome] ?? result.outcome}\n베팅 ${result.amountXp} XP · 원금 포함 지급 ${result.payoutXp} XP · 손익 ${result.netXp} XP\n적용 장기 기대 지급률 ${result.rtp}% · 보유 경험치 ${result.profile.xp} XP`,
   rafflePreview: (result) =>
     `현재 후보 ${result.candidateCount}명 중 ${result.winners}명\n1인당 ${result.amountXp} XP · 총 ${result.totalXp} XP\n확인 후 실행 시 현재 가입 상태와 역할을 다시 검증합니다.`,
   raffleResult: (result) =>
-    `추첨 지급이 완료되었습니다. 총 ${result.totalXp} XP\n${result.winners.map((winner) => `<@${winner.userId}> · ${winner.amountXp} XP`).join('\n')}`,
+    `추첨 지급이 완료되었습니다. 총 ${result.totalXp} XP\n${result.winners.map((winner) => `${memberName(winner)} · ${winner.amountXp} XP`).join('\n')}`,
   componentExpired: '이 화면은 만료되었습니다. 명령어를 다시 실행해 주세요.',
   componentOtherUser: '다른 회원의 화면입니다. 본인의 명령어를 실행해 주세요.',
   profileTitle: (name) => `${name}님의 활동 정보`,
@@ -166,14 +172,14 @@ export const XP_KO = Object.freeze({
   remainingXp: (xp) => `${xp}점 남음`,
   voiceTime: (milliseconds) => `${(milliseconds / 3600000).toFixed(2)}시간`,
   leaderboardEntry: (member) =>
-    `${member.rank}위 <@${member.userId}> | 경험치 ${member.xp}점 | 레벨 ${member.level}`,
+    `${member.rank}위 ${memberName(member)} | 경험치 ${member.xp}점 | 레벨 ${member.level}`,
   statsTitle: (name, days) => `${name} 활동 통계: 최근 ${days}일`,
   attendanceAward: (xp) =>
     `출석이 완료되었습니다. 경험치 ${xp}점을 받았습니다.`,
   attendanceCount: (days, rank) =>
     `${days}일 · ${rank === null ? '순위 없음' : `${rank}위`}`,
   attendanceEntry: (member, kind) =>
-    `${kind === 'total' ? member.totalRank : member.streakRank}위 <@${member.userId}> | ${kind === 'total' ? member.total : member.streak}일`,
+    `${kind === 'total' ? member.totalRank : member.streakRank}위 ${memberName(member)} | ${kind === 'total' ? member.total : member.streak}일`,
   errors: Object.freeze({
     STALE_MEMBER:
       '서버 가입 상태가 변경되었습니다. 잠시 후 다시 시도해 주세요.',
