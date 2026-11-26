@@ -351,6 +351,13 @@ cookie. An application code expires after 60 seconds and is exchanged once at
 PKCE verifier. OAuth state, sessions, codes and bearer tokens are stored hashed;
 Discord provider tokens are not persisted.
 
+Discord's RFC 9207 callback `iss` parameter is accepted only when it exactly
+matches `https://discord.com`, the issuer published in its
+[authorization-server metadata](https://discord.com/.well-known/oauth-authorization-server).
+Legacy callbacks without `iss` remain supported; unexpected or duplicate
+parameters are rejected. Issuer validation precedes state consumption and any
+provider token request.
+
 General API requests use a short-lived bearer token in page memory, never
 third-party cookies or local storage. Reload and expiry restoration use a
 bounded top-level navigation through the API session. Cookie-only requests to

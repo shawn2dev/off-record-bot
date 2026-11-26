@@ -253,6 +253,44 @@ describe('Dashboard OAuth and browser-bound sessions', () => {
     expect(providerCalls).to.have.length(2);
   });
 
+  it('validates the Discord callback issuer before consuming state or contacting the provider', async () => {
+    const started = await auth.begin({
+      returnTo: config.dashboardUrl,
+      ...proof(),
+    });
+    const callback = {
+      state: new URL(started.redirect).searchParams.get('state'),
+      code: 'discord-provider-code',
+      cookieHeader: started.cookies[0].split(';')[0],
+    };
+    for (const issuer of [
+      '',
+      'https://untrusted.test',
+      'https://discord.com/',
+      'http://discord.com',
+      'https://discord.com.untrusted.test',
+      'https://discord.com@untrusted.test',
+    ]) {
+      await auth.callback({ ...callback, issuer }).then(
+        () => expect.fail('An unexpected issuer must be rejected.'),
+        (error) => expect(error.code).to.equal('INVALID_LOGIN'),
+      );
+    }
+    expect(providerCalls).to.deep.equal([]);
+    expect(
+      store.database.prepare('SELECT COUNT(*) AS n FROM xp_auth_states').get()
+        .n,
+    ).to.equal(1);
+    const result = await auth.callback({
+      ...callback,
+      issuer: 'https://discord.com',
+    });
+    expect(
+      new URL(result.redirect).searchParams.has('offrecord_code'),
+    ).to.equal(true);
+    expect(providerCalls).to.have.length(2);
+  });
+
   it('exchanges one-use codes only with the original PKCE and browser binding', async () => {
     const values = await login(auth, config);
     expect(auth.authenticate(`Bearer ${values.accessToken}`).user.id).to.equal(
@@ -673,6 +711,7 @@ describe('Authenticated HTTP API', () => {
       `${base}/auth/callback?${new URLSearchParams({
         state: authorize.searchParams.get('state'),
         code: 'discord-provider-code',
+        iss: 'https://discord.com',
       })}`,
       { headers: { Cookie: marker }, redirect: 'manual' },
     );
@@ -708,6 +747,76 @@ describe('Authenticated HTTP API', () => {
         })
       ).status,
     ).to.equal(400);
+  });
+
+  it('rejects unexpected issuers, duplicate callback fields and unknown parameters over HTTP', async () => {
+    const warning = sinon.stub(console, 'warn');
+    try {
+      const cases = [
+        [[['iss', 'https://untrusted.test']], 'INVALID_LOGIN'],
+        [[['iss', '']], 'INVALID_LOGIN'],
+        [
+          [
+            ['iss', 'https://discord.com'],
+            ['iss', 'https://discord.com'],
+          ],
+          'INVALID_REQUEST',
+        ],
+        [
+          [
+            ['iss', 'https://discord.com'],
+            ['code', 'duplicate-provider-code'],
+          ],
+          'INVALID_REQUEST',
+        ],
+        [
+          [
+            ['iss', 'https://discord.com'],
+            ['unknown', 'private-query-value'],
+          ],
+          'INVALID_REQUEST',
+        ],
+      ];
+      for (const [fields, expected] of cases) {
+        const started = await running.api.auth.begin({
+          returnTo: config.dashboardUrl,
+          ...proof(),
+        });
+        const query = new URLSearchParams({
+          state: new URL(started.redirect).searchParams.get('state'),
+          code: 'private-provider-code',
+        });
+        for (const [key, value] of fields) query.append(key, value);
+        const pending = store.database
+          .prepare('SELECT COUNT(*) AS n FROM xp_auth_states')
+          .get().n;
+        const response = await fetch(`${base}/auth/callback?${query}`, {
+          headers: { Cookie: started.cookies[0].split(';')[0] },
+          redirect: 'manual',
+        });
+        expect(response.status).to.equal(303);
+        expect(
+          new URL(response.headers.get('location')).searchParams.get(
+            'offrecord_error',
+          ),
+        ).to.equal('login_failed');
+        expect(warning.lastCall.args[1].code).to.equal(expected);
+        expect(
+          store.database
+            .prepare('SELECT COUNT(*) AS n FROM xp_auth_states')
+            .get().n,
+        ).to.equal(pending);
+      }
+      const logged = JSON.stringify(warning.args);
+      for (const secret of [
+        'private-provider-code',
+        'duplicate-provider-code',
+        'private-query-value',
+      ])
+        expect(logged).not.to.contain(secret);
+    } finally {
+      warning.restore();
+    }
   });
 
   it('rejects oversized headers before membership or domain execution', async () => {

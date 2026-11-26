@@ -383,11 +383,18 @@ export class XpApi {
         return;
       }
       if (url.pathname === '/auth/callback' && request.method === 'GET') {
-        assertQuery(url, ['state', 'code', 'error', 'error_description']);
+        assertQuery(url, [
+          'state',
+          'code',
+          'error',
+          'error_description',
+          'iss',
+        ]);
         const result = await this.auth.callback({
           state: url.searchParams.get('state'),
           code: url.searchParams.get('code'),
           error: url.searchParams.get('error'),
+          issuer: url.searchParams.get('iss'),
           cookieHeader: request.headers.cookie,
         });
         this.redirect(response, result.redirect, result.cookies);

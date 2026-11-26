@@ -245,7 +245,9 @@ export class XpAuth {
     }
   }
 
-  async callback({ state, code, error, cookieHeader }) {
+  async callback({ state, code, error, issuer = null, cookieHeader }) {
+    if (issuer !== null && issuer !== 'https://discord.com')
+      throw new XpApiError('INVALID_LOGIN');
     const marker = this.readCookie(cookieHeader, this.loginCookie);
     if (!isOpaque(state) || !marker) throw new XpApiError('INVALID_LOGIN');
     const pending = this.store.transaction(() => {
