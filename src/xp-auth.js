@@ -116,8 +116,8 @@ export class XpAuth {
     );
   }
 
-  async requireMember(userId) {
-    const member = await this.discord.member(userId);
+  async requireMember(userId, { cached = false } = {}) {
+    const member = await this.discord.member(userId, { cached });
     if (
       !member ||
       member.bot !== false ||

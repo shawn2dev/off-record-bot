@@ -39,6 +39,14 @@ export function normalizeDiscordMember(member) {
 }
 
 export function createXpDiscord(client, guildId) {
+  const readCache = new Map();
+  const readInFlight = new Map();
+  let revision = 0;
+  const invalidateReadCache = () => {
+    revision += 1;
+    readCache.clear();
+    readInFlight.clear();
+  };
   const bounded = async (action) => {
     let timer;
     const controller = new AbortController();
@@ -62,41 +70,77 @@ export function createXpDiscord(client, guildId) {
       throw new Error('Discord guild is unavailable.');
     return value;
   };
-  return {
-    async member(userId) {
-      try {
-        return normalizeDiscordMember(
-          await bounded(() =>
-            guild().members.fetch({ user: userId, force: true, cache: false }),
-          ),
-        );
-      } catch (error) {
-        if (error.code === 10007 || error.code === 10013) return null;
-        throw error;
-      }
-    },
-    async roles() {
-      const currentGuild = guild();
-      const [roles, self] = await bounded(() =>
-        Promise.all([
-          currentGuild.roles.fetch(),
-          currentGuild.members.fetchMe({ force: true }),
-        ]),
-      );
-      return [...roles.values()].filter(Boolean).map((role) => ({
-        id: role.id,
-        name: role.name,
-        position: role.position,
-        managed: role.managed,
-        dangerous: dangerousPermissions.some((permission) =>
-          role.permissions.has(permission),
+  const read = async (key, load, cached) => {
+    guild();
+    if (!cached) return load();
+    const existing = readCache.get(key);
+    if (existing?.expiresAt > Date.now())
+      return structuredClone(existing.value);
+    readCache.delete(key);
+    if (readInFlight.has(key))
+      return structuredClone(await readInFlight.get(key));
+    const startedRevision = revision;
+    const pending = load()
+      .then((value) => {
+        if (revision !== startedRevision) throw new XpError('UNAVAILABLE');
+        if (value !== null) {
+          if (readCache.size >= 256)
+            readCache.delete(readCache.keys().next().value);
+          readCache.set(key, {
+            value: structuredClone(value),
+            expiresAt: Date.now() + 5000,
+          });
+        }
+        return value;
+      })
+      .finally(() => {
+        if (readInFlight.get(key) === pending) readInFlight.delete(key);
+      });
+    readInFlight.set(key, pending);
+    return structuredClone(await pending);
+  };
+  const fetchMember = async (userId) => {
+    try {
+      return normalizeDiscordMember(
+        await bounded(() =>
+          guild().members.fetch({ user: userId, force: true, cache: false }),
         ),
-        manageable:
-          role.id !== guildId &&
-          !role.managed &&
-          self.permissions.has(PermissionFlagsBits.ManageRoles) &&
-          self.roles.highest.comparePositionTo(role) > 0,
-      }));
+      );
+    } catch (error) {
+      if (error.code === 10007 || error.code === 10013) return null;
+      throw error;
+    }
+  };
+  const fetchRoles = async () => {
+    const currentGuild = guild();
+    const [roles, self] = await bounded(() =>
+      Promise.all([
+        currentGuild.roles.fetch(),
+        currentGuild.members.fetchMe({ force: true }),
+      ]),
+    );
+    return [...roles.values()].filter(Boolean).map((role) => ({
+      id: role.id,
+      name: role.name,
+      position: role.position,
+      managed: role.managed,
+      dangerous: dangerousPermissions.some((permission) =>
+        role.permissions.has(permission),
+      ),
+      manageable:
+        role.id !== guildId &&
+        !role.managed &&
+        self.permissions.has(PermissionFlagsBits.ManageRoles) &&
+        self.roles.highest.comparePositionTo(role) > 0,
+    }));
+  };
+  return {
+    invalidateReadCache,
+    async member(userId, { cached = false } = {}) {
+      return read(`member:${userId}`, () => fetchMember(userId), cached);
+    },
+    async roles({ cached = false } = {}) {
+      return read('roles', fetchRoles, cached);
     },
     async members(roleId) {
       const members = await bounded(() =>
@@ -111,11 +155,13 @@ export function createXpDiscord(client, guildId) {
     },
     async addRole(userId, roleId, expected = {}) {
       await bounded(async (signal) => {
-        const member = await guild().members.fetch({
-          user: userId,
-          force: true,
-          cache: false,
-        });
+        const member = await guild()
+          .members.fetch({
+            user: userId,
+            force: true,
+            cache: false,
+          })
+          .finally(invalidateReadCache);
         if (
           expected.joinedAt !== undefined &&
           member.joinedTimestamp !== expected.joinedAt
@@ -129,11 +175,13 @@ export function createXpDiscord(client, guildId) {
     },
     async setNickname(userId, nickname, expected = {}) {
       await bounded(async (signal) => {
-        const member = await guild().members.fetch({
-          user: userId,
-          force: true,
-          cache: false,
-        });
+        const member = await guild()
+          .members.fetch({
+            user: userId,
+            force: true,
+            cache: false,
+          })
+          .finally(invalidateReadCache);
         if (
           expected.joinedAt !== undefined &&
           member.joinedTimestamp !== expected.joinedAt

@@ -392,6 +392,7 @@ export async function run() {
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    discord.invalidateReadCache();
     clearInterval(timer);
     clearInterval(workerTimer);
     try {
@@ -427,12 +428,14 @@ export async function run() {
     };
   const suspend = protect(() => {
     generation += 1;
+    discord.invalidateReadCache();
     tracker.suspend();
     console.log('XP tracking suspended; live voice intervals discarded.');
   });
   const bootstrap = async () => {
     if (stopping || initializing || tracker.active || !client.isReady()) return;
     initializing = true;
+    discord.invalidateReadCache();
     const currentGeneration = generation;
     try {
       if (client.application.id !== config.applicationId) {
@@ -503,11 +506,15 @@ export async function run() {
   );
   client.on(
     Events.GuildMemberRemove,
-    protect((member) => tracker.leave(member, Date.now())),
+    protect((member) => {
+      if (member.guild.id === config.guildId) discord.invalidateReadCache();
+      tracker.leave(member, Date.now());
+    }),
   );
   client.on(
     Events.GuildMemberAdd,
     protect((member) => {
+      if (member.guild.id === config.guildId) discord.invalidateReadCache();
       if (member.guild.id === config.guildId && !member.user.bot)
         store.activate(
           config.guildId,
@@ -520,6 +527,7 @@ export async function run() {
   client.on(
     Events.GuildMemberUpdate,
     protect((previous, member) => {
+      if (member.guild.id === config.guildId) discord.invalidateReadCache();
       if (
         tracker.active &&
         member.guild.id === config.guildId &&
@@ -530,6 +538,14 @@ export async function run() {
           normalizeDiscordMember(member),
         );
     }),
+  );
+  const invalidateRoleCache = protect((role) => {
+    if (role.guild.id === config.guildId) discord.invalidateReadCache();
+  });
+  client.on(Events.GuildRoleCreate, invalidateRoleCache);
+  client.on(Events.GuildRoleDelete, invalidateRoleCache);
+  client.on(Events.GuildRoleUpdate, (previous, role) =>
+    invalidateRoleCache(role),
   );
   client.on(Events.InteractionCreate, (interaction) =>
     handleXpInteraction(interaction, store, tracker, () => stopping, economy),

@@ -425,7 +425,9 @@ export class XpApi {
       }
       if (!url.pathname.startsWith('/api/'))
         throw new XpApiError('NOT_FOUND', 404);
-      const member = await this.auth.requireMember(session.user.id);
+      const member = await this.auth.requireMember(session.user.id, {
+        cached: request.method === 'GET',
+      });
       this.available();
       if (controller.signal.aborted)
         throw new XpApiError('REQUEST_TIMEOUT', 408);
@@ -579,7 +581,7 @@ export class XpApi {
         const after = url.searchParams.get('after');
         if (after !== null && !snowflake(after))
           throw new XpApiError('INVALID_REQUEST');
-        const roles = (await this.discord.roles())
+        const roles = (await this.discord.roles({ cached: true }))
           .filter((role) => after === null || role.id > after)
           .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
         const items = roles.slice(0, 50);

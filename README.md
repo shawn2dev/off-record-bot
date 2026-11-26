@@ -216,7 +216,7 @@ Discord Administrator permission alone does not grant application access.
 The owner may explicitly delegate an existing high/Administrator role; sale-role
 safety restrictions are not incorrectly applied to this trusted decision.
 Any role referenced by a product is rejected for delegation, and delegated
-roles cannot be sold. Caller role IDs come from fresh Discord membership,
+roles cannot be sold. Purchase role IDs come from fresh Discord membership,
 never browser input. Reward changes affect only future check-ins.
 
 Gifts charge the sender the requested amount; the receiver gets that amount
@@ -369,6 +369,18 @@ the session cannot revive those old tokens.
 All member routes require an exact allowed Origin and a valid token, then
 verify current Discord membership. Settings/actions also validate current
 delegated permissions; Discord Administrator alone does not grant access.
+Authenticated GETs share five-second Discord member/role snapshots, bounded
+to 256 entries per adapter. Concurrent identical lookups share one provider
+request. Gateway member/role changes, reconnect/bootstrap, shutdown and
+role/nickname mutation attempts invalidate the snapshots; lookups invalidated
+while in flight fail rather than returning stale authorization metadata.
+Disconnected clients cannot use cached entries. Missing members and provider
+failures are not cached. OAuth, mutations and their subsequent authorization
+rechecks always fetch fresh Discord membership/roles.
+Token expiry, session revocation, access-policy versions, XP balances and
+financial/history queries are checked live, not stored in this metadata cache.
+Without a received Gateway event, read-only membership/role changes may take
+up to five seconds to appear; write authorization never uses that grace period.
 Responses use `Cache-Control: private, no-store`, restrictive security headers
 and Korean structured errors. Configure Cloudflare cache bypass for the
 entire API hostname; never add a cache-everything rule to authenticated routes.

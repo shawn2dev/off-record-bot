@@ -650,6 +650,27 @@ describe('Authenticated HTTP API', () => {
     const cookieOnly = await request(base, config, null, '/api/me', {
       headers: { Cookie: cookie },
     });
+
+    it('uses cached metadata only for reads and requires fresh membership for writes', async () => {
+      const lookup = sinon.spy(running.api.auth.discord, 'member');
+      expect((await request(base, config, token, '/api/me')).status).to.equal(
+        200,
+      );
+      expect(lookup.lastCall.args[1]).to.deep.equal({ cached: true });
+      expect(
+        (
+          await request(base, config, token, '/api/gifts', {
+            method: 'POST',
+            body: JSON.stringify({
+              userId: XP_OWNER_ID,
+              amount: 1,
+              key: 'fresh-membership',
+            }),
+          })
+        ).status,
+      ).to.equal(200);
+      expect(lookup.lastCall.args[1]).to.deep.equal({ cached: false });
+    });
     expect(cookieOnly.status).to.equal(401);
     membership = null;
     expect((await request(base, config, token, '/api/me')).status).to.equal(

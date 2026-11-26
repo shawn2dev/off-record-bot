@@ -13,6 +13,12 @@ const userIdValid = (value) =>
   typeof value === 'string' && /^\d{17,20}$/.test(value);
 const object = (value) =>
   value && typeof value === 'object' && !Array.isArray(value);
+const readActions = new Set([
+  'shop.list',
+  'orders.list',
+  'nickname.status',
+  'admin.summary',
+]);
 const isAppliedName = (saved, nickname) =>
   Boolean(
     saved && saved.applied_name !== null && saved.applied_name === nickname,
@@ -98,10 +104,10 @@ export class XpEconomy {
     if (this.closed || !this.isAvailable()) fail('UNAVAILABLE');
   }
 
-  async trusted(userId) {
+  async trusted(userId, { cached = false } = {}) {
     if (!userIdValid(userId)) fail('INVALID_MEMBER');
     this.assertAvailable();
-    const member = await this.discord.member(userId);
+    const member = await this.discord.member(userId, { cached });
     this.assertAvailable();
     if (!member || member.bot || member.userId !== userId)
       fail('INVALID_MEMBER');
@@ -203,7 +209,9 @@ export class XpEconomy {
 
   async execute(action, userId, input = {}) {
     if (!object(input)) fail('INVALID_TRANSACTION');
-    const actor = await this.trusted(userId);
+    const actor = await this.trusted(userId, {
+      cached: readActions.has(action),
+    });
     switch (action) {
       case 'shop.list':
         return this.shop(actor, input);

@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
 import { PermissionFlagsBits } from 'discord.js';
+import sinon from 'sinon';
 import { createXpDiscord, normalizeDiscordMember } from '../src/xp-discord.js';
 
 const guildId = '111111111111111111';
@@ -102,10 +103,136 @@ function fixture() {
     member,
     guild,
     client,
+    role,
   };
 }
 
 describe('Trusted Discord economy adapter', () => {
+  it('does not retain revoked roles after member-event invalidation', async () => {
+    const { discord, member } = fixture();
+    expect(
+      (await discord.member(userId, { cached: true })).roleIds,
+    ).to.deep.equal([roleId]);
+    member.roles.cache.clear();
+    discord.invalidateReadCache();
+    expect(
+      (await discord.member(userId, { cached: true })).roleIds,
+    ).to.deep.equal([]);
+  });
+
+  it('shares read lookups, isolates returned values and expires them after five seconds', async () => {
+    const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    try {
+      const { discord, calls } = fixture();
+      const values = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          discord.member(userId, { cached: true }),
+        ),
+      );
+      expect(calls).to.have.length(1);
+      values[0].roleIds.push(unsafeId);
+      expect(
+        (await discord.member(userId, { cached: true })).roleIds,
+      ).to.deep.equal([roleId]);
+      await discord.member(userId);
+      expect(calls).to.have.length(2);
+      clock.setSystemTime(6000);
+      await discord.member(userId, { cached: true });
+      expect(calls).to.have.length(3);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('shares read-only role snapshots but always fetches fresh roles for mutations', async () => {
+    const { discord, guild, role } = fixture();
+    const roles = sinon.spy(guild.roles, 'fetch');
+    const self = sinon.spy(guild.members, 'fetchMe');
+    await Promise.all(
+      Array.from({ length: 6 }, () => discord.roles({ cached: true })),
+    );
+    expect(roles.calledOnce).to.equal(true);
+    expect(self.calledOnce).to.equal(true);
+    role.name = '변경된 역할';
+    expect((await discord.roles())[0].name).to.equal(role.name);
+    expect(roles.callCount).to.equal(2);
+    discord.invalidateReadCache();
+    expect((await discord.roles({ cached: true }))[0].name).to.equal(role.name);
+    expect(roles.callCount).to.equal(3);
+  });
+
+  it('rejects a read started before invalidation and does not delete the newer in-flight lookup', async () => {
+    const { discord, guild, member } = fixture();
+    const releases = [];
+    guild.members.fetch = () =>
+      new Promise((resolve) => releases.push(() => resolve(member)));
+    const old = discord.member(userId, { cached: true }).then(
+      () => expect.fail('Invalidated metadata must not be returned.'),
+      (error) => expect(error.code).to.equal('UNAVAILABLE'),
+    );
+    discord.invalidateReadCache();
+    const current = discord.member(userId, { cached: true });
+    releases[0]();
+    await old;
+    const shared = discord.member(userId, { cached: true });
+    expect(releases).to.have.length(2);
+    releases[1]();
+    expect(await current).to.deep.equal(await shared);
+  });
+
+  it('does not cache missing members or failed requests', async () => {
+    const { discord, guild, member } = fixture();
+    let calls = 0;
+    guild.members.fetch = async () => {
+      calls += 1;
+      if (calls === 1)
+        throw Object.assign(new Error('missing'), { code: 10007 });
+      if (calls === 2) throw new Error('offline');
+      return member;
+    };
+    expect(await discord.member(userId, { cached: true })).to.equal(null);
+    await discord.member(userId, { cached: true }).then(
+      () => expect.fail('Provider failures must be visible.'),
+      (error) => expect(error.message).to.equal('offline'),
+    );
+    expect((await discord.member(userId, { cached: true })).userId).to.equal(
+      userId,
+    );
+    expect(calls).to.equal(3);
+  });
+
+  it('bounds read-cache entries instead of retaining every user indefinitely', async () => {
+    const { discord, guild, member } = fixture();
+    let calls = 0;
+    guild.members.fetch = async ({ user }) => {
+      calls += 1;
+      return { ...member, id: user };
+    };
+    const users = Array.from({ length: 257 }, (_, index) =>
+      String(700000000000000000n + BigInt(index)),
+    );
+    for (const id of users) await discord.member(id, { cached: true });
+    expect(calls).to.equal(257);
+    await discord.member(users[0], { cached: true });
+    expect(calls).to.equal(258);
+    await discord.member(users.at(-1), { cached: true });
+    expect(calls).to.equal(258);
+  });
+
+  it('invalidates cached metadata on mutation attempts and refuses cached reads while disconnected', async () => {
+    const { discord, calls, client } = fixture();
+    await discord.member(userId, { cached: true });
+    await discord.addRole(userId, roleId, { joinedAt: 12 });
+    await discord.member(userId, { cached: true });
+    expect(calls.filter((call) => !Array.isArray(call))).to.have.length(3);
+    client.isReady = () => false;
+    await discord.member(userId, { cached: true }).then(
+      () => expect.fail('Disconnected sessions must not use cached metadata.'),
+      (error) =>
+        expect(error.message).to.equal('Discord guild is unavailable.'),
+    );
+  });
+
   it('forces fresh uncached member fetches and exposes normalized membership', async () => {
     const { discord, calls } = fixture();
     expect(await discord.member(userId)).to.deep.equal({
